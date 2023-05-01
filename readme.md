@@ -1,6 +1,6 @@
-STM32F4XX arm-none-eabi-g++ Project Template (RAM load)
+STM32F4discovery USB sample project  (RAM load)
 =====   
-This is STM32F4XX project template files but C++    
+This is STM32F4discovery USB sample project 
 
 How to use
 =====
@@ -18,6 +18,11 @@ And program in main.c and pls make. You will get
 Please use arm-none-eabi-gdb to load it to your target board.
 report will contain some useful info. You can watch disassembly and see what's going on   
 in case of your program not responding.   
+
+Function
+=====
+If you connect usb cable in OTG_FS (STM32F4's microB connector),    
+This will add dummy device.   
 
 License
 =====
