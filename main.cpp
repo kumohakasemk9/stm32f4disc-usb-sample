@@ -181,9 +181,9 @@ void USBsetupHandler(std_req_t r) {
 		if((rDescType == DESC_DEV || rDescType == DESC_CONF) && rDescIndex == 0) {
 			uint8_t *s[] = {(uint8_t*)dev_desc, (uint8_t*)conf_desc};
 			EP0responsePacket = s[rDescType - 1]; //Choose appropriate packet
-		} else if(rDescType == DESC_STR && rDescIndex < 4) {
+		} else if(rDescType == DESC_STR && rDescIndex < 3) {
 			uint8_t *s[] = {(uint8_t*)string_desc0, (uint8_t*)string_desc1, 
-											(uint8_t*)string_desc2, (uint8_t*)string_desc3 };
+											(uint8_t*)string_desc2 };
 			EP0responsePacket = s[rDescIndex];
 		} else {
 			//Bad descriptor type or too big descriptor index.
