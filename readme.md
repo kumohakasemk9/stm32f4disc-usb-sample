@@ -4,6 +4,10 @@ This is STM32F4discovery USB sample project
 
 How to use
 =====
+**Warning!!!   
+This is minimal and unquality implement of usb,    
+Save all your files before try to connect usb to your computer.    
+Your pc may get kernelpanic or BSoD for this usb handling implement.**
 First you need some missing files. stm32f4xx.h and CMSIS. After downloading,   
 Please modify makefile for correct include path.  
 You have to make include path pointing correct dir to CMSIS includes and stm32f4xx.h.  
