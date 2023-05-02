@@ -10,47 +10,45 @@
 #define STALL 2 //Response STALL in next data stage 
 
 #define DESC_DEV 1
-#define DESC_CONF 2
+#define DESC_CFG 2
 #define DESC_STR 3
 #define DESC_IF 4
 #define DESC_EP 5
 
 #define REQ_SET_ADDR 5
 #define REQ_GET_DESC 6
-#define REQ_SET_CONF 9
+#define REQ_SET_CFG 9
 
 #include <stm32f4xx.h>
 #include <cstring>
-
-//USB Standard request type
-typedef struct {
-	uint8_t bmRequestType;
-	uint8_t bRequest;
-	uint16_t wValue;
-	uint16_t wIndex;
-	uint16_t wLength;
-} std_req_t;
 
 uint8_t* EP0responsePacket;
 uint8_t EP0responsePlan, EP0responsePacketLen;
 
 //Device descriptor
-const uint8_t dev_desc[18] = {18, DESC_DEV, 0, 2, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 1, 2, 0, 1};
+const uint8_t DEV_DESC_C[] = {18, DESC_DEV, 0, 2, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 1, 2, 0, 1};
 
-//Configuration Descriptor with interface descs ...
-const uint8_t conf_desc[18] = {9, DESC_CONF, 18, 0, 1, 1, 0, 0xc0, 0, 9, DESC_IF, 0, 0, 0, 0, 0, 0, 0};
+//Configuration Descriptor
+const uint8_t CFG_DESC_C[] = {9, DESC_CFG, 9, 0, 1, 1, 0, 0xc0, 0};
+
+//Interface descriptor
+const uint8_t IF_DESC_C[] = {9, DESC_IF, 0, 0, 2, 0, 0 ,0 , 0};
+
+//Endpoint Descriptors
+const uint8_t EP_DESC0_C[] = {7, DESC_EP, 1, 2, 64, 0, 10};
+const uint8_t EP_DESC1_C[] = {7, DESC_EP, 0x82,2, 64,0,10};
+
+uint8_t cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C) + (sizeof(EP_DESC0_C) * 2)];
 
 //String Descriptor 0
-const uint8_t string_desc0[4] = {4, DESC_STR, 0, 0};
+const uint8_t STR_DESC0_C[] = {4, DESC_STR, 0, 0};
 
 //String Descriptor 1 :KumoTech
-const uint8_t string_desc1[18] = {18, DESC_STR, 'K', 0, 'u', 0, 'm', 0, 'o', 0, 'T', 0, 'e', 0, 'c', 0 ,'h', 0};
+const uint8_t STR_DESC1_C[] = {18, DESC_STR , 'K', 0, 'u', 0, 'm', 0,'o' ,0 ,'T',0 ,'e',0 ,'c',0 , 'h'};
 
 //String Descriptor 2 :STM32F4discovery USBTest Project
-const uint8_t string_desc2[66] = 
-	{66, DESC_STR, 'S', 0, 'T', 0, 'M', 0, '3', 0, '2', 0 ,'F', 0, '4', 0, 'D', 0, 'i', 0, 's', 0,
-	'c', 0, 'o', 0, 'v', 0, 'e', 0, 'r', 0, 'y', 0 ,' ', 0, 'U', 0, 'S', 0, 'B', 0, 'T', 0,
-	'e', 0, 's', 0, 't', 0, ' ', 0, 'P', 0, 'r', 0, 'o', 0, 'j', 0, 'e', 0, 'c', 0 ,'t', 0};
+const uint8_t STR_DESC2_C[] = {66, DESC_STR, 'S',0, 'T',0 ,'M',0 ,'3',0 ,'2',0 ,'F',0 ,'4',0 ,'d',0 ,'i',0 ,'s',0 ,'c',0 ,'o',0 ,'v',0 ,'e',0 ,'r',0 ,'y',0 ,' ',0 ,
+															'U',0, 'S',0, 'B',0, 'T',0, 'e',0, 's',0, 't',0, ' ',0, 'P',0, 'r',0, 'o',0, 'j',0, 'e',0, 'c',0, 't',0};
 
 void delay(uint32_t);
 void debug(char* = "\r\n");
@@ -59,7 +57,7 @@ void readUSBFIFO(uint8_t*, uint16_t);
 void writeUSBFIFO(uint8_t*, uint16_t, uint32_t);
 void dump(uint8_t*, uint8_t);
 void USBreceiveHandler();
-void USBsetupHandler(std_req_t);
+void USBsetupHandler(uint8_t*);
 void setUSBAddress(uint8_t);
 void USBsetupDataStage();
 void FlushTxFIFOs();
@@ -72,6 +70,17 @@ int main() {
 	while((RCC->CR & (1 << 25)) == 0); //Wait for PLL
 	RCC->CFGR = 2; //Switch to PLL
 	RCC->CR &= ~1; //Internal OSC Off
+
+	//Prapare Config desc (follows Interface and EPs)
+	memcpy(cfg_desc_t, &CFG_DESC_C, sizeof(CFG_DESC_C));
+	memcpy(&cfg_desc_t[sizeof(CFG_DESC_C)], &IF_DESC_C, sizeof(IF_DESC_C));
+	memcpy(&cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C)], &EP_DESC0_C, sizeof(EP_DESC0_C));
+	memcpy(&cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C) + sizeof(EP_DESC0_C)], &EP_DESC1_C, sizeof(EP_DESC1_C));
+
+	cfg_desc_t[2] = sizeof(cfg_desc_t); //rewrite wTotalLength
+	//and testdata
+	uint8_t testdata[64];
+	for(uint8_t i = 0; i > 64; i++) {testdata[i] = i; }
 
 	//USART2 Config
 	RCC->APB1ENR |= 1 << 17; //USART2 Enable
@@ -108,8 +117,8 @@ int main() {
 			//Reset Interrupt
 			debug("\033[41mUSB RESET\033[0m\r\n");
 			//debug("USB Reset Completed.\r\n");
-			//debug("OTG_FS_DIEPTXF0=");
-			//debugI(OTG_FS->DIEPTXF0, 8, 16); //Reset value was 0x02000200 (different from reference manual!)
+			//debug("OTG_FS_DIEPTXF1=");
+			//debugI(OTG_FS->DIEPTXF1, 8, 16); //Reset value was 0x02000200 (different from reference manual!)
 			//debug("\r\nOTG_FS_DIEPCTL0=");
 			//debugI(OTG_FS->DIEPCTL0, 8, 16);
 			//debug();
@@ -130,9 +139,33 @@ int main() {
 			debug("USB EP0 IN Transmit confirmed (XFRC)\r\n");
 		}
 
+		if(OTG_FS->DIEPINT2 & 0x10) {
+			//IN EP2 Received IN but no data in TxFIFO
+			OTG_FS->DIEPINT2 = 0x10;
+			debug("USB EP2 IN Host want more data (ITTXFE)\r\n");
+			//OTG_FS->DOEPCTL0 = 1 << 31;
+		}/*
+
+		if(OTG_FS->DIEPINT1) {
+			//IN EP1 XFRC (Tx Complete ?)
+			
+			debug("USB EP1 IN Interrupt: ");
+			debugI(OTG_FS->DIEPINT1,8 ,16);
+			debug();
+			OTG_FS->DIEPINT1 = 0xffffffff;
+		}*/
+
 		if(OTG_FS->GINTSTS & 0x10) {
 			//RXFLVL interrupt (Received packet from host)
 			USBreceiveHandler();
+		}
+
+		if(GPIOA->IDR & 0x1) {
+			if(OTG_FS->DIEPCTL1 & (1 << 15)) {
+				OTG_FS->DIEPTSIZ1 = (1 << 19) + 64;
+				OTG_FS->DIEPCTL1 |= (1 << 26) + (1 << 31);
+				writeUSBFIFO(testdata, 64, OTG_FS_DFIFO0_BASE + 0x400);
+			}
 		}
 	}
 }
@@ -148,12 +181,9 @@ void USBreceiveHandler() {
 		//4b. Setup packet pattern
 		uint8_t rbuf[8];
 		readUSBFIFO(rbuf, 8); //Readout RxFIFO
-		//Decode read packet into usb standard request form
-		std_req_t r;
-		memcpy(&r ,rbuf ,8);
 		debug("\033[44mSETUP\033[0m ");
 		dump(rbuf, 8);
-		USBsetupHandler(r);
+		USBsetupHandler(rbuf);
 	} else if(pktsts == 4) {
 		//4c. Setup stage done pattern
 		//debug("SETUP Data Stage FIFO free space:");
@@ -164,26 +194,43 @@ void USBreceiveHandler() {
 		//debugI(EP0responsePacketLen);
 		//debug();
 		USBsetupDataStage();
+	} else if(pktsts == 2) {
+		//OUT Packet outside ep0
+		uint8_t buf[64];
+		readUSBFIFO(buf, bcnt);
+		debug("\033[44mDATA OUT FROM EP");
+		debugI(epnum,2);
+		debug("\033[0m\r\n");
+		dump(buf, bcnt);
 	} else {
 		debug("RXFLVL - Pktsts = ");
 		debugI(pktsts,1);
+		debug(" EPNUM = ");
+		debugI(epnum, 2);
 		debug("\r\n");
 	}
 }
 
 //Called when SETUP received
-void USBsetupHandler(std_req_t r) {
-	if(r.bmRequestType == 0x80 && r.bRequest == REQ_GET_DESC && r.wIndex == 0) {
+void USBsetupHandler(uint8_t *r) {
+	//Decode SETUP packet
+	uint8_t bmRequestType = r[0];
+	uint8_t bRequest = r[1];
+	uint16_t wValue = r[2] + (r[3] << 8);
+	uint16_t wIndex = r[4] + (r[5] << 8) ;
+	uint16_t wLength = r[6] + (r[7] << 8);
+	if(bmRequestType == 0x80 && bRequest == REQ_GET_DESC && wIndex == 0) {
 		//GET_DESCRIPTOR(6)
-		uint8_t rDescType = (r.wValue >> 8) & 0xff; //wValue[15:8] required descriptor type
-		uint8_t rDescIndex = r.wValue & 0xff; //wValue[7:0] required descriptor index
+		uint8_t rDescType = r[3]; //wValue[15:8] required descriptor type
+		uint8_t rDescIndex = r[2]; //wValue[7:0] required descriptor index
 		EP0responsePlan = PACKET_OR_ACK; //Send packet in data stage
-		if((rDescType == DESC_DEV || rDescType == DESC_CONF) && rDescIndex == 0) {
-			uint8_t *s[] = {(uint8_t*)dev_desc, (uint8_t*)conf_desc};
-			EP0responsePacket = s[rDescType - 1]; //Choose appropriate packet
-		} else if(rDescType == DESC_STR && rDescIndex < 4) {
-			uint8_t *s[] = {(uint8_t*)string_desc0, (uint8_t*)string_desc1, 
-											(uint8_t*)string_desc2, (uint8_t*)string_desc3 };
+		if(rDescType == DESC_DEV && rDescIndex == 0) {
+			EP0responsePacket = (uint8_t*)DEV_DESC_C;
+		} else if(rDescType == DESC_CFG && rDescIndex == 0) {
+			//Prepare Configuration Descriptor
+			EP0responsePacket = cfg_desc_t;
+		} else if(rDescType == DESC_STR && rDescIndex < 3) {
+			uint8_t *s[] = {(uint8_t*)&STR_DESC0_C, (uint8_t*)&STR_DESC1_C, (uint8_t*)&STR_DESC2_C };
 			EP0responsePacket = s[rDescIndex];
 		} else {
 			//Bad descriptor type or too big descriptor index.
@@ -192,22 +239,26 @@ void USBsetupHandler(std_req_t r) {
 		if(EP0responsePlan != STALL) {
 			//Choose appropriate size, most descriptor has length in offset 0
 			EP0responsePacketLen = EP0responsePacket[0];
-			if(rDescType == DESC_CONF) {
+			if(rDescType == DESC_CFG) {
 				//Special case: CONFIG descriptor
-				EP0responsePacketLen = EP0responsePacket[2];
+				EP0responsePacketLen = sizeof(cfg_desc_t);
 			}
 			//If packet is larger than wLength, turncate sending size
-			if(EP0responsePacketLen > r.wLength) {
-				EP0responsePacketLen = r.wLength;
+			if(EP0responsePacketLen > wLength) {
+				EP0responsePacketLen = wLength;
 			}
 		}
-	} else if(r.bmRequestType == 0 && r.bRequest == REQ_SET_ADDR && r.wIndex == 0 && r.wLength == 0 && r.wValue < 128) {
+	} else if(bmRequestType == 0 && bRequest == REQ_SET_ADDR && wIndex == 0 && wLength == 0 && wValue < 128) {
 		//SET_ADDRESS(5)
-		setUSBAddress(r.wValue);
+		setUSBAddress(wValue);
 		EP0responsePlan = PACKET_OR_ACK; //Send ACK in data stage
 		EP0responsePacketLen = 0; //Send 0 length
-	} else if(r.bmRequestType == 0 && r.bRequest == REQ_SET_CONF && r.wValue == 1 && r.wIndex == 0 && r.wLength == 0) {
+	} else if(bmRequestType == 0 && bRequest == REQ_SET_CFG && wValue == 1 && wIndex == 0 && wLength == 0) {
 		//SET_CONFIGURATION(9) but only config 1 exists so wValue should be 0
+		//34.17.5 Endpoint Activation
+		//Device configured event
+		OTG_FS->DOEPCTL1 = (2 << 18) + (1 << 15) + 64; //EP1 OUT Bulk, Enable, 64Byte Max
+		OTG_FS->DIEPCTL2 = (1 << 22) + (2 << 18) + (1 << 15) + 64; //EP2 IN Bulk, Enable, 64Byte Max
 		EP0responsePlan = PACKET_OR_ACK;
 		EP0responsePacketLen = 0;
 	} else {
@@ -249,6 +300,7 @@ void USBsetupDataStage() {
 				//debugI(OTG_FS->DIEPTSIZ0, 8, 16);
 				//debug();
 			}
+			//Write step
 			OTG_FS->DIEPCTL0 |= (1 << 26) + (1 << 31); //2. Get ready for writing FIFO
 			OTG_FS->DOEPCTL0 |= 1 << 26; //Finally I figured out, I must set SNAK of OTG_FS->DOEPCTL0, too.
 			if(EP0responsePacketLen != 0) {
