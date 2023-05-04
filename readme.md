@@ -1,6 +1,13 @@
 STM32F4discovery USB sample project  (RAM load)
 =====   
 This is STM32F4discovery USB sample project 
+Working Version:  
+    
+Endpoints:   
+EP0 OUT IN ... Control   
+EP1 IN ... Bulk   
+EP1 will return test data (0x40...0x0)   
+
 
 How to use
 =====

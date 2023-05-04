@@ -32,13 +32,12 @@ const uint8_t DEV_DESC_C[] = {18, DESC_DEV, 0, 2, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0,
 const uint8_t CFG_DESC_C[] = {9, DESC_CFG, 9, 0, 1, 1, 0, 0xc0, 0};
 
 //Interface descriptor
-const uint8_t IF_DESC_C[] = {9, DESC_IF, 0, 0, 2, 0, 0 ,0 , 0};
+const uint8_t IF_DESC_C[] = {9, DESC_IF, 0, 0, 1, 0, 0 ,0 , 0};
 
 //Endpoint Descriptors
-const uint8_t EP_DESC0_C[] = {7, DESC_EP, 1, 2, 64, 0, 10};
-const uint8_t EP_DESC1_C[] = {7, DESC_EP, 0x82,2, 64,0,10};
+const uint8_t EP_DESC0_C[] = {7, DESC_EP, 0x81, 2, 64, 0, 10};
 
-uint8_t cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C) + (sizeof(EP_DESC0_C) * 2)];
+uint8_t cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C) + sizeof(EP_DESC0_C)];
 
 //String Descriptor 0
 const uint8_t STR_DESC0_C[] = {4, DESC_STR, 0, 0};
@@ -54,8 +53,8 @@ void delay(uint32_t);
 void debug(char* = "\r\n");
 void debugI(uint32_t, uint8_t = 4, uint8_t = 10);
 void readUSBFIFO(uint8_t*, uint16_t);
-void writeUSBFIFO(uint8_t*, uint16_t, uint32_t);
-void dump(uint8_t*, uint8_t);
+void writeUSBFIFO(uint8_t*, uint16_t, uint8_t);
+void dump(uint8_t*, uint16_t);
 void USBreceiveHandler();
 void USBsetupHandler(uint8_t*);
 void setUSBAddress(uint8_t);
@@ -75,7 +74,6 @@ int main() {
 	memcpy(cfg_desc_t, &CFG_DESC_C, sizeof(CFG_DESC_C));
 	memcpy(&cfg_desc_t[sizeof(CFG_DESC_C)], &IF_DESC_C, sizeof(IF_DESC_C));
 	memcpy(&cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C)], &EP_DESC0_C, sizeof(EP_DESC0_C));
-	memcpy(&cfg_desc_t[sizeof(CFG_DESC_C) + sizeof(IF_DESC_C) + sizeof(EP_DESC0_C)], &EP_DESC1_C, sizeof(EP_DESC1_C));
 
 	cfg_desc_t[2] = sizeof(cfg_desc_t); //rewrite wTotalLength
 	//and testdata
@@ -125,30 +123,29 @@ int main() {
 			setUSBAddress(0);
 			FlushTxFIFOs();
 			/*
-			what happening to stm32 usb fifo, modifying fifo size config register broke my program.
-			(Data will be sent, but Host URB will say -ENOENT, won't happen when not modifying the register)
-			more mysterious, fifo address register told me TXFIFO0 is starts from 0x200,
-			 but wrote to 0xc0 and program ran normally. (Same result whatever I wrote data from 0x200 or 0x0)
-			 so I am not touching those registers
-			 I do not have any Idea how to operate STM32 FIFO correctly, I am tired.
+			My mistake was thinking DIEPTXFx[16:0] is address of TxFIFOx
+			write access address, but correct way is using OTG_FS_DFIFOx.
+			NG: OTG_FS_DFIFOx + 0x100;
+			OK: OTG_FS_DFIFO0
+			Adjusting FIFO space
 			*/
-			//OTG_FS->GRXFSIZ = 16; //RXFIFO Start= 0x0, Size = 64Bytes
-			OTG_FS->DIEPTXF0 = (64 << 16) + 0x100; //TXFIFO0 Start=0x40 Size=128Bytes
-			OTG_FS->DIEPTXF1 = (64 << 16) + 0x200; //TXFIFO1 Start=0xc0 Size=128Bytes
-			OTG_FS->DIEPTXF2 = (64 << 16) + 0x300;
-			OTG_FS->DIEPTXF3 = (64 << 16) + 0x400;
+			//OTG_FS->GRXFSIZ = 64; //RXFIFO Start= 0x0, Size = 64Bytes
+			//OTG_FS->DIEPTXF0 = (32 << 16) + 0x100; //TXFIFO0 Start=0x100 Size=128Bytes
+			//OTG_FS->DIEPTXF1 = (32 << 16) + 0x180; //TXFIFO1 Start=0x180 Size=128Bytes
+			//OTG_FS->DIEPTXF2 = (32 << 16) + 0x300;
+			//OTG_FS->DIEPTXF3 = (32 << 16) + 0x400;
 
-			//No need to modify - those values are reset values.
-			//OTG_FS->DIEPCTL0 = (1 << 15); //EP0 IN Control, En, 64Bytes Max, FIFO0
+			//No need to modify EP0 related regs - those values are reset values.
+			//OTG_FS->DIEPCTL0 = (1 << 22) +(1 << 15); //EP0 IN Control, En, 64Bytes Max, FIFO0
 			//OTG_FS->DOEPCTL0 = (1 << 15); //EP0 OUT Control, En, 64Bytes Max
-			OTG_FS->DOEPCTL1 = (2 << 18) + (1 << 15) + 64; //EP1 OUT Bulk, Enable, 64Byte Max
-			OTG_FS->DIEPCTL2 = /*(1 << 22) +*/ (2 << 18) + (1 << 15) + 64; //EP2 IN Bulk, Enable, 64Byte Max, FIFO0
+			//It looks like FIFO number need to be as same as EP number
+			OTG_FS->DIEPCTL1 = (1 << 22) + (2 << 18) + (1 << 15) + 64; //EP2 IN Bulk, Enable, 64Byte Max, FIFO1
 			//34.17.5 Device programming model - Reset
 			//Not setting SNAK bits, setting it will disable packet receiving.
 			//OTG_FS->DOEPCTL0 |= 1 << 27; //EP0 OUT SNAK
 			//OTG_FS->DOEPCTL1 |= 1 << 27; //EP1 OUT SNAK
-			OTG_FS->DOEPCTL2 |= 1 << 27; //EP2 OUT SNAK
-			OTG_FS->DOEPCTL3 |= 1 << 27; //EP2 OUT SNAK
+			//OTG_FS->DOEPCTL2 |= 1 << 27; //EP2 OUT SNAK
+			//OTG_FS->DOEPCTL3 |= 1 << 27; //EP2 OUT SNAK
 		}
 
 		if(OTG_FS->DIEPINT0 & 0x10) {
@@ -164,27 +161,29 @@ int main() {
 			debug("USB EP0 IN Transmit confirmed (XFRC)\r\n");
 		}
 
-		if(OTG_FS->DIEPINT2 & 0x10) {
-			//IN EP2 Received IN but no data in TxFIFO
-			OTG_FS->DIEPINT2 = 0x10;
-			debug("USB EP2 IN Host want more data (ITTXFE)\r\n");
+		if(OTG_FS->DIEPINT1 & 0x10) {
+			//IN EP1 Received IN but no data in TxFIFO
+			OTG_FS->DIEPINT1 = 0x10;
+			debug("USB EP1 IN Host want more data (ITTXFE)\r\n");
 			//Sending 0 length packet = succeed
 			//Response ep1
 			//debugI(OTG_FS->DIEPTXF1, 8 , 16);
 			//debug(" ");
 			//debugI(OTG_FS->DTXFSTS2, 8 , 16);
 			//debug("\r\n");
-			OTG_FS->DIEPTSIZ2 = (1 << 19) + 32;
-			OTG_FS->DIEPCTL2 |= (1 << 31) + (1 << 26);
+			OTG_FS->DIEPTSIZ1 = (1 << 19) + 64;
+			OTG_FS->DIEPCTL1 |= (1 << 31) + (1 << 26);
 			//OTG_FS->DOEPCTL2 |= (1 << 31) + (1 << 26);
 			//OTG_FS->DIEPCTL2 |= 1 << 21; //STALL
-			writeUSBFIFO((uint8_t*)STR_DESC2_C ,32 , OTG_FS_DFIFO0_BASE + 0x200);
+			uint8_t td[64];
+			for(uint8_t i = 0; i < 64; i++) {td[i] = 64 - i; }
+			writeUSBFIFO(td ,64 , 1); //Send test data
 		}
 
-		if(OTG_FS->DIEPINT2 & 0x1) {
+		if(OTG_FS->DIEPINT1 & 0x1) {
 			//IN EP1 XFRC (Tx Complete ?)
-			OTG_FS->DIEPINT2 = 0x1;
-			debug("USB EP2 IN Transmit confirmed (XFRC)\r\n");
+			OTG_FS->DIEPINT1 = 0x1;
+			debug("USB EP1 IN Transmit confirmed (XFRC)\r\n");
 		}
 
 		if(OTG_FS->GINTSTS & 0x10) {
@@ -194,18 +193,14 @@ int main() {
 
 		if(GPIOA->IDR & 0x1) {
 			//Debug key pressed
-			debug("DIEPTXF0 (TxFIFO0 Config)=");
-			debugI(OTG_FS->DIEPTXF0,8,16);
-			debug("\r\nDIEPTXF1 (TXFIFO1 Config)=");
-			debugI(OTG_FS->DIEPTXF1,8,16);
-			debug("\r\n");
-			debug("DTXFSTS2 (EP2 IN FIFO Free Sapce)=");
-			debugI(OTG_FS->DTXFSTS2,8,16);
-			debug("\r\nDIEPTSIZ2 (EP2 IN Transfer Size Reg)=");
-			debugI(OTG_FS->DIEPTSIZ2,8,16);
-			debug("\r\nDIEPCTL2 (EP2 IN Control Reg)=");
-			debugI(OTG_FS->DIEPCTL2,8,16);
-			debug("\r\n");
+			//Write testdata to FIFO 1 and Flush FIFO 1 then dump debug memory
+			//to find exact FIFO1 location
+			/*uint8_t td[64];
+			for(uint8_t i = 0; i < 64; i++) {td[i] = 0xff;}
+			writeUSBFIFO(td,64, OTG_FS_DFIFO2_BASE);
+			debug("Dump of 0x50020000\r\n");
+			dump((uint8_t*)(OTG_FS_DFIFO0_BASE + 0x20000), 1024);
+			FlushTxFIFOs();*/
 		}
 	}
 }
@@ -345,7 +340,7 @@ void USBsetupDataStage() {
 			OTG_FS->DIEPCTL0 |= (1 << 26) + (1 << 31); //2. Get ready for writing FIFO
 			OTG_FS->DOEPCTL0 |= 1 << 26; //Finally I figured out, I must set SNAK of OTG_FS->DOEPCTL0, too.
 			if(EP0responsePacketLen != 0) {
-				writeUSBFIFO(EP0responsePacket, EP0responsePacketLen, OTG_FS_DFIFO0_BASE + 0x100); //Write data after setting those registers
+				writeUSBFIFO(EP0responsePacket, EP0responsePacketLen, 0); //Write data after setting those registers
 			}
 		}
 		EP0responsePlan = NAK;
@@ -408,8 +403,8 @@ void readUSBFIFO(uint8_t *dst, uint16_t len) {
 }
 
 //like hexdump, dump data d for len bytes.
-void dump(uint8_t *d, uint8_t len) {
-	for(uint8_t i = 0; i < len; i++) {
+void dump(uint8_t *d, uint16_t len) {
+	for(uint16_t i = 0; i < len; i++) {
 		debugI(d[i], 2, 16);
 		debug(" ");
 		if(i % 16 == 15) {
@@ -421,23 +416,22 @@ void dump(uint8_t *d, uint8_t len) {
 	}
 }
 
-//Write to USB OTG_FS TxFIFO (addressed by dst) from s for len bytes
-void writeUSBFIFO(uint8_t *s, uint16_t len, uint32_t dst) {
+//Write to USB OTG_FS TxFIFO (number fifonum) from s for len bytes
+void writeUSBFIFO(uint8_t *s, uint16_t len, uint8_t fifonum) {
 	/* TXFIFO is not shared, there is more than one TXFIFO areas,
-		and I am still guessing where those FIFO are starting from.
-		writing form OTG_FS_DFIFO0_BASE (same as RxFIFO start address)
-		does not break my program, and TxFIFO0 start address = RxFIFO0 start address?
-		OTG_FS_DFIFO1 not looks like start address for TxFIFO0 nor TxFIFO1.
-		Writing to OTG_FS_DFIFO1 simplly breaks program. (0x2000)
-		They said FIFO is about 1KB so looks like overflow.
-		I tried many DIEPCTLx[25:22] and starting TxFIFO adresses
-		(0x0, 0x200, 0x400 = TxFIFO address register reset value)
-		combinations, but it all won't work. I do not have any idea.
-		I heve no Idea at all.
+		and it looks like we need to write OTG_FS_DFIFOx (x = FIFO number to write)
+		when data write. and
+		If you want to write to FIFO0: OTG_FS_DFIFO0,
+		FIFO1 access : OTG_FS_DFIFO1 ....
+		And it looks like read access to OTG_FS_DFIFO0 will read
+		shared RxFIFO buffer.
 		32bit access is required.
 	*/
-	uint32_t* d = (uint32_t*)dst;
+	uint32_t* d = 0;
 	uint16_t i = 0;
+	//OTG_FS_DFIFO0_BASE + 0x0 : OTG_FS_DFIFO0_BASE,
+	//+0x1000 : OTG_FS_DFIFO1_BASE ... (according to fig 395)
+	d = (uint32_t*)(OTG_FS_DFIFO0_BASE + (0x1000 * fifonum));
 	while(i < len) {
 		//Convert uint8_t[4] to uint32_t: 0xaa 0xbb 0xcc 0xdd -> 0xddccbbaa
 		uint32_t e = 0;
